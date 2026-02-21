@@ -95,6 +95,20 @@ func NewAtomicFixedWindow(client *redis.Client, limit int, windowSize time.Durat
 	}
 }
 
+type AtomicSlidingWindowLimiter struct {
+	client     *redis.Client
+	limit      int
+	windowSize time.Duration
+}
+
+func NewAtomicSlidingWindow(client *redis.Client, limit int, windowSize time.Duration) *AtomicSlidingWindowLimiter {
+	return &AtomicSlidingWindowLimiter{
+		client: client, 
+		limit: limit, 
+		windowSize: windowSize,
+	}
+}
+
 func (a *AtomicLimiter) Allow(ctx context.Context, clientID string) (bool, int, error) {
 	windowStart := time.Now().Truncate(a.windowSize).Unix()
 	key := fmt.Sprintf("rate:atomic:fixed:%s:%d", clientID, windowStart)
@@ -103,6 +117,33 @@ func (a *AtomicLimiter) Allow(ctx context.Context, clientID string) (bool, int, 
 		ctx,
 		a.client,
 		[]string{key},
+		a.limit,
+		int(a.windowSize.Seconds()),
+	).Int()
+
+	if err != nil {
+		return false, 0, fmt.Errorf("lua script error: %w", err)
+	}
+
+	remaining := a.limit - result
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	return result <= a.limit, remaining, nil
+}
+
+func (a *AtomicSlidingWindowLimiter) Allow(ctx context.Context, clientID string) (bool, int, error) {
+	key := fmt.Sprintf("rate:atomic:sliding:%s", clientID)
+	now := time.Now().UnixMicro()
+	windowStart := time.Now().Add(-a.windowSize).UnixMicro()
+
+	result, err := slidingWindowScript.Run(
+		ctx,
+		a.client,
+		[]string{key},
+		now,
+		windowStart,
 		a.limit,
 		int(a.windowSize.Seconds()),
 	).Int()

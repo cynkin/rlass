@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
-	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/cynkin/rlaas/limiter"
-	"github.com/cynkin/rlaas/store"
+	"github.com/cynkin/rlaas/grpcserver"
+	pb "github.com/cynkin/rlaas/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -17,33 +19,32 @@ func main() {
 		return
 	}
 
-	client := redis.NewClient(&redis.Options{
+	redisClient := redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
 
 	ctx := context.Background()
-	client.FlushAll(ctx)
+	if err := redisClient.Ping(ctx).Err(); err != nil {
+		fmt.Printf("Redis connection failed: %v\n", err)
+		return
+	}
+	fmt.Println("Redis connected")
 
-	fmt.Println("=== Original Fixed Window ===")
-	fw := limiter.NewFixedWindowLimiter(client, 5, 10*time.Second)
-	for i := 1; i <= 8; i++ {
-		allowed, remaining, _ := fw.Allow(ctx, "fw-client")
-		status := "✓ ALLOWED"
-		if !allowed {
-			status = "✗ BLOCKED"
-		}
-		fmt.Printf("Request %d: %s (remaining: %d)\n", i, status, remaining)
+	// Start gRPC server
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		fmt.Printf("Failed to listen: %v\n", err)
+		return
 	}
 
-	fmt.Println()
-	fmt.Println("=== Atomic Fixed Window (Lua) ===")
-	afw := store.NewAtomicFixedWindow(client, 5, 10*time.Second)
-	for i := 1; i <= 8; i++ {
-		allowed, remaining, _ := afw.Allow(ctx, "afw-client")
-		status := "✓ ALLOWED"
-		if !allowed {
-			status = "✗ BLOCKED"
-		}
-		fmt.Printf("Request %d: %s (remaining: %d)\n", i, status, remaining)
+	grpcServer := grpc.NewServer()
+	pb.RegisterRateLimiterServer(grpcServer, grpcserver.NewRateLimiterServer(redisClient))
+
+	// Reflection lets tools like grpcurl inspect your service without the proto file
+	reflection.Register(grpcServer)
+
+	fmt.Println("gRPC server listening on :50051")
+	if err := grpcServer.Serve(lis); err != nil {
+		fmt.Printf("Failed to serve: %v\n", err)
 	}
 }

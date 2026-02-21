@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package ratelimiter;
+
+option go_package = "github.com/cynkin/rlaas/proto";
+
+// The one RPC that every caller uses
+service RateLimiter {
+  rpc CheckLimit(CheckLimitRequest) returns (CheckLimitResponse);
+}
+
+message CheckLimitRequest {
+  string client_id  = 1;  // who is making the request
+  string rule_id    = 2;  // which rule to apply (e.g. "login", "search")
+}
+
+message CheckLimitResponse {
+  bool   allowed        = 1;  // should the caller proceed?
+  int32  remaining      = 2;  // how many requests left in window
+  int64  retry_after_ms = 3;  // if blocked, wait this long before retrying
+  string algorithm      = 4;  // which algorithm handled this (for observability)
+}
