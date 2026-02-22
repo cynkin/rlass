@@ -16,6 +16,13 @@ import (
 	"google.golang.org/grpc/reflection"
 )
 
+func getEnv(key, defaultVal string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return defaultVal
+}
+
 func main() {
 	// if its run with 2 args, start the http server
 	if len(os.Args) >= 3 {
@@ -23,10 +30,12 @@ func main() {
 		return
 	}
 	ctx := context.Background()
+	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
+	dbURL := getEnv("DATABASE_URL", "postgresql://rlaas:rlaas@localhost:5432/rlaas")
 
 	// Create client (like saving the phone no but not dialing it yet)
 	redisClient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
+		Addr: redisAddr,
 	})
 
 	// Ping Redis to open connection
@@ -36,7 +45,6 @@ func main() {
 	}
 	fmt.Println("Redis connected")
 
-	dbURL := "postgresql://rlaas:rlaas@localhost:5432/rlaas"
 	db, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
 		fmt.Printf("PostgreSQL connection failed: %v\n", err)
@@ -50,11 +58,19 @@ func main() {
 	}
 	fmt.Println("✓ PostgreSQL connected")
 
+	if err := runMigrations(ctx, db); err != nil {
+		fmt.Printf("Migration failed: %v\n", err)
+		return
+	}
+
 	ruleStore := store.NewRuleStore(db)
 	if err := ruleStore.SeedDefaultRules(ctx); err != nil {
 		fmt.Printf("Failed to seed rules: %v\n", err)
 		return
 	}
+
+	admin := adminapi.NewAdminServer(db, ruleStore)
+	go admin.Start("8090")
 
 	// Opens a TCP port (Claiming this port)
 	lis, err := net.Listen("tcp", ":50051")
@@ -71,9 +87,6 @@ func main() {
 
 	// Reflection lets tools like grpcurl inspect your service without the proto file
 	reflection.Register(grpcServer)
-
-	admin := adminapi.NewAdminServer(db, ruleStore)
-	go admin.Start("8090")
 
 	fmt.Println("✓ gRPC server listening on :50051")
 	if err := grpcServer.Serve(lis); err != nil {
