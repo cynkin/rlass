@@ -61,7 +61,7 @@ func (s *RateLimiterServer) CheckLimit(ctx context.Context, req *pb.CheckLimitRe
 	}
 
 	// Build a composite key: rule + client so different rules don't interfere
-	clientKey := fmt.Sprintf("%s:%s", rule.ID, req.ClientId)
+	clientKey := fmt.Sprintf("%s:%s", rule.RuleID, req.ClientId)
 	windowSize := time.Duration(rule.WindowSecs) * time.Second
 
 	var allowed bool

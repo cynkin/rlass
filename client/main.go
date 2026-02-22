@@ -26,7 +26,7 @@ func main() {
 	fmt.Println("=== Testing default rule (limit: 10/60s) ===")
 	for i := 1; i <= 12; i++ {
 		resp, err := client.CheckLimit(ctx, &pb.CheckLimitRequest{
-			ClientId: "alice-2",
+			ClientId: "alice",
 			RuleId:   "default",
 		})
 		if err != nil {

@@ -30,7 +30,7 @@ type RuleStore struct {
 func NewRuleStore(db *pgxpool.Pool) *RuleStore {
 	return &RuleStore{
 		db:       db,
-		cache:    make(map[string]Rule),
+		cache:    make(map[string]Rule), // start with empty cache map
 		cacheTTL: 30 * time.Second, // rules refresh every 30 seconds
 	}
 }
@@ -117,4 +117,10 @@ func (r *RuleStore) SeedDefaultRules(ctx context.Context) error {
 		ON CONFLICT (rule_id) DO NOTHING
 	`)
 	return err
+}
+
+func (r *RuleStore) InvalidateCache() {
+	r.cacheMu.Lock()
+	r.cacheUntil = time.Time{} // zero time forces refresh on next request
+	r.cacheMu.Unlock()
 }
