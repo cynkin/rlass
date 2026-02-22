@@ -41,34 +41,38 @@ var DefaultRules = map[string]Rule{
 }
 
 type RateLimiterServer struct {
-	pb.UnimplementedRateLimiterServer
+	pb.UnimplementedRateLimiterServer	// embedding for forward compatibility
 	redisClient *redis.Client
+	ruleStore  *store.RuleStore
 }
 
-func NewRateLimiterServer(redisClient *redis.Client) *RateLimiterServer {
-	return &RateLimiterServer{redisClient: redisClient}
+func NewRateLimiterServer(redisClient *redis.Client, ruleStore *store.RuleStore) *RateLimiterServer {
+	return &RateLimiterServer{
+		redisClient: redisClient,
+		ruleStore:   ruleStore,
+	}
 }
 
 func (s *RateLimiterServer) CheckLimit(ctx context.Context, req *pb.CheckLimitRequest) (*pb.CheckLimitResponse, error) {
 	// Look up the rule
-	rule, ok := DefaultRules[req.RuleId]
-	if !ok {
-		rule = DefaultRules["default"]
+	rule, err := s.ruleStore.GetRule(ctx, req.RuleId)
+	if err != nil {
+		return nil, fmt.Errorf("rule lookup failed: %w", err)
 	}
 
 	// Build a composite key: rule + client so different rules don't interfere
 	clientKey := fmt.Sprintf("%s:%s", rule.ID, req.ClientId)
+	windowSize := time.Duration(rule.WindowSecs) * time.Second
 
 	var allowed bool
 	var remaining int
-	var err error
-
+	
 	switch rule.Algorithm {
 	case "sliding_window":
-		sw := store.NewAtomicSlidingWindow(s.redisClient, rule.Limit, rule.WindowSize)
+		sw := store.NewAtomicSlidingWindow(s.redisClient, rule.Limit, windowSize)
 		allowed, remaining, err = sw.Allow(ctx, clientKey)
 	default: // fixed_window
-		fw := store.NewAtomicFixedWindow(s.redisClient, rule.Limit, rule.WindowSize)
+		fw := store.NewAtomicFixedWindow(s.redisClient, rule.Limit, windowSize)
 		allowed, remaining, err = fw.Allow(ctx, clientKey)
 	}
 
@@ -78,7 +82,7 @@ func (s *RateLimiterServer) CheckLimit(ctx context.Context, req *pb.CheckLimitRe
 
 	retryAfterMs := int64(0)
 	if !allowed {
-		retryAfterMs = rule.WindowSize.Milliseconds()
+		retryAfterMs = windowSize.Milliseconds()
 	}
 
 	return &pb.CheckLimitResponse{
