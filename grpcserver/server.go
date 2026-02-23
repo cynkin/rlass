@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	pb "github.com/cynkin/rlaas/proto"
 	"github.com/cynkin/rlaas/store"
@@ -43,13 +44,15 @@ var DefaultRules = map[string]Rule{
 type RateLimiterServer struct {
 	pb.UnimplementedRateLimiterServer	// embedding for forward compatibility
 	redisClient *redis.Client
-	ruleStore  *store.RuleStore
+	ruleStore  	*store.RuleStore
+	db 			*pgxpool.Pool
 }
 
-func NewRateLimiterServer(redisClient *redis.Client, ruleStore *store.RuleStore) *RateLimiterServer {
+func NewRateLimiterServer(redisClient *redis.Client, ruleStore *store.RuleStore, db *pgxpool.Pool) *RateLimiterServer {
 	return &RateLimiterServer{
 		redisClient: redisClient,
 		ruleStore:   ruleStore,
+		db:          db,
 	}
 }
 
@@ -84,6 +87,14 @@ func (s *RateLimiterServer) CheckLimit(ctx context.Context, req *pb.CheckLimitRe
 	if !allowed {
 		retryAfterMs = windowSize.Milliseconds()
 	}
+
+	go func() {
+		logCtx := context.Background()
+		s.db.Exec(logCtx, `
+			INSERT INTO request_logs (client_id, rule_id, allowed)
+			VALUES ($1, $2, $3)
+		`, req.ClientId, req.RuleId, allowed)
+	}()
 
 	return &pb.CheckLimitResponse{
 		Allowed:      allowed,

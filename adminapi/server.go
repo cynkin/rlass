@@ -39,6 +39,7 @@ type UpdateRuleRequest struct {
 func (a *AdminServer) Start(port string) {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /metrics", a.getMetrics)
 	mux.HandleFunc("GET /rules", a.listRules)
 	mux.HandleFunc("POST /rules", a.createRule)
 	mux.HandleFunc("PATCH /rules/{rule_id}", a.updateRule)
@@ -173,9 +174,74 @@ func (a *AdminServer) deleteRule(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "disabled", "rule_id": ruleID})
 }
 
+func (a *AdminServer) getMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Count total requests in last 60 seconds from request_logs
+	var totalAllowed, totalBlocked int
+	err := a.db.QueryRow(ctx, `
+		SELECT 
+			COUNT(*) FILTER (WHERE allowed = true),
+			COUNT(*) FILTER (WHERE allowed = false)
+		FROM request_logs
+		WHERE created_at > NOW() - INTERVAL '60 seconds'
+	`).Scan(&totalAllowed, &totalBlocked)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Get per-rule breakdown
+	rows, err := a.db.Query(ctx, `
+		SELECT 
+			rule_id,
+			COUNT(*) FILTER (WHERE allowed = true) as allowed,
+			COUNT(*) FILTER (WHERE allowed = false) as blocked
+		FROM request_logs
+		WHERE created_at > NOW() - INTERVAL '60 seconds'
+		GROUP BY rule_id
+		ORDER BY rule_id
+	`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	type RuleMetric struct {
+		RuleID  string `json:"rule_id"`
+		Allowed int    `json:"allowed"`
+		Blocked int    `json:"blocked"`
+	}
+
+	var ruleMetrics []RuleMetric
+	for rows.Next() {
+		var rm RuleMetric
+		rows.Scan(&rm.RuleID, &rm.Allowed, &rm.Blocked)
+		ruleMetrics = append(ruleMetrics, rm)
+	}
+
+	type MetricsResponse struct {
+		TotalAllowed int          `json:"total_allowed"`
+		TotalBlocked int          `json:"total_blocked"`
+		ByRule       []RuleMetric `json:"by_rule"`
+		Timestamp    time.Time    `json:"timestamp"`
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(MetricsResponse{
+		TotalAllowed: totalAllowed,
+		TotalBlocked: totalBlocked,
+		ByRule:       ruleMetrics,
+		Timestamp:    time.Now(),
+	})
+}
+
 // helper for testing
 func (a *AdminServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /metrics", a.getMetrics)
 	mux.HandleFunc("GET /rules", a.listRules)
 	mux.HandleFunc("POST /rules", a.createRule)
 	mux.HandleFunc("PATCH /rules/{rule_id}", a.updateRule)

@@ -83,7 +83,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 
 	// Register our service implementation with the gRPC server
-	pb.RegisterRateLimiterServer(grpcServer, grpcserver.NewRateLimiterServer(redisClient, ruleStore))
+	pb.RegisterRateLimiterServer(grpcServer, grpcserver.NewRateLimiterServer(redisClient, ruleStore, db))
 
 	// Reflection lets tools like grpcurl inspect your service without the proto file
 	reflection.Register(grpcServer)
