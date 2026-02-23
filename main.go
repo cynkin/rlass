@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -38,12 +39,23 @@ func main() {
 		Addr: redisAddr,
 	})
 
-	// Ping Redis to open connection
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		fmt.Printf("✓ Redis connection failed: %v\n", err)
+	// Ping Redis with retries to handle K8s DNS resolution delay
+	var redisErr error
+	for i := 1; i <= 10; i++ {
+		redisErr = redisClient.Ping(ctx).Err()
+		if redisErr == nil {
+			break
+		}
+		fmt.Printf("Redis connection attempt %d/10 failed: %v\n", i, redisErr)
+		if i < 10 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+	if redisErr != nil {
+		fmt.Printf("✗ Redis connection failed after 10 attempts: %v\n", redisErr)
 		return
 	}
-	fmt.Println("Redis connected")
+	fmt.Println("✓ Redis connected")
 
 	db, err := pgxpool.New(ctx, dbURL)
 	if err != nil {

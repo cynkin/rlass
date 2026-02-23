@@ -36,6 +36,19 @@ type UpdateRuleRequest struct {
     Enabled     *bool   `json:"enabled"`
 }
 
+func cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (a *AdminServer) Start(port string) {
 	mux := http.NewServeMux()
 
@@ -46,7 +59,7 @@ func (a *AdminServer) Start(port string) {
 	mux.HandleFunc("DELETE /rules/{rule_id}", a.deleteRule)
 
 	fmt.Printf("✓ Admin API listening on port %s\n", port)
-	http.ListenAndServe(":"+port, mux)
+	http.ListenAndServe(":"+port, cors(mux))
 }
 
 func (a *AdminServer) listRules(w http.ResponseWriter, r *http.Request) {
@@ -229,7 +242,6 @@ func (a *AdminServer) getMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(MetricsResponse{
 		TotalAllowed: totalAllowed,
 		TotalBlocked: totalBlocked,
