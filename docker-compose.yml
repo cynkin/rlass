@@ -3,6 +3,8 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    environment:
+      TZ: Asia/Kolkata
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -15,6 +17,7 @@ services:
       POSTGRES_USER: rlaas
       POSTGRES_PASSWORD: rlaas
       POSTGRES_DB: rlaas
+      TZ: Asia/Kolkata
     ports:
       - "5432:5432"
     healthcheck:
@@ -24,11 +27,15 @@ services:
       retries: 5
 
   prometheus:
-    image: prom/prometheus:latest
+    build:
+      context: .
+      dockerfile: prometheus.Dockerfile
     ports:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    environment:
+      TZ: Asia/Kolkata
     depends_on:
       - rlaas
 
@@ -38,6 +45,7 @@ services:
       - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - TZ=Asia/Kolkata
     depends_on:
       - prometheus
 
@@ -49,6 +57,7 @@ services:
     environment:
       REDIS_ADDR: redis:6379
       DATABASE_URL: postgresql://rlaas:rlaas@postgres:5432/rlaas
+      TZ: Asia/Kolkata
     depends_on:
       redis:
         condition: service_healthy
