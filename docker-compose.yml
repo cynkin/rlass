@@ -1,0 +1,56 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rlaas
+      POSTGRES_PASSWORD: rlaas
+      POSTGRES_DB: rlaas
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rlaas"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - rlaas
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+
+  rlaas:
+    build: .
+    ports:
+      - "50051:50051"
+      - "8090:8090"
+    environment:
+      REDIS_ADDR: redis:6379
+      DATABASE_URL: postgresql://rlaas:rlaas@postgres:5432/rlaas
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
