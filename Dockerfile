@@ -4,7 +4,7 @@ FROM golang:1.25-alpine AS builder
 
 WORKDIR /app
 
-# Copy dependency files first (Docker caches this layer)
+# Copy dependency files first (Docker caches this layer) Copy into app/
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -29,4 +29,5 @@ COPY --from=builder /app/migrations ./migrations
 # Expose gRPC and admin API ports
 EXPOSE 50051 8090
 
+# go run .
 CMD ["./rlaas"]
