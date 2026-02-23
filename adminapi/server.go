@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/cynkin/rlaas/store"
 )
@@ -52,6 +53,7 @@ func cors(next http.Handler) http.Handler {
 func (a *AdminServer) Start(port string) {
 	mux := http.NewServeMux()
 
+	mux.Handle("/metrics/prometheus", promhttp.Handler())
 	mux.HandleFunc("GET /metrics", a.getMetrics)
 	mux.HandleFunc("GET /rules", a.listRules)
 	mux.HandleFunc("POST /rules", a.createRule)
@@ -253,6 +255,8 @@ func (a *AdminServer) getMetrics(w http.ResponseWriter, r *http.Request) {
 // helper for testing
 func (a *AdminServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux := http.NewServeMux()
+	
+	mux.Handle("/metrics/prometheus", promhttp.Handler())
 	mux.HandleFunc("GET /metrics", a.getMetrics)
 	mux.HandleFunc("GET /rules", a.listRules)
 	mux.HandleFunc("POST /rules", a.createRule)

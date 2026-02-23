@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/cynkin/rlaas/metrics"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	pb "github.com/cynkin/rlaas/proto"
@@ -57,6 +59,13 @@ func NewRateLimiterServer(redisClient *redis.Client, ruleStore *store.RuleStore,
 }
 
 func (s *RateLimiterServer) CheckLimit(ctx context.Context, req *pb.CheckLimitRequest) (*pb.CheckLimitResponse, error) {
+	// Track active connections
+	metrics.ActiveConnections.Inc()
+	defer metrics.ActiveConnections.Dec()
+
+	// Start timing the entire request
+	requestStart := time.Now()
+
 	// Look up the rule
 	rule, err := s.ruleStore.GetRule(ctx, req.RuleId)
 	if err != nil {
@@ -70,6 +79,9 @@ func (s *RateLimiterServer) CheckLimit(ctx context.Context, req *pb.CheckLimitRe
 	var allowed bool
 	var remaining int
 	
+	// Time the Redis operation specifically
+	redisStart := time.Now()
+
 	switch rule.Algorithm {
 	case "sliding_window":
 		sw := store.NewAtomicSlidingWindow(s.redisClient, rule.Limit, windowSize)
@@ -79,9 +91,41 @@ func (s *RateLimiterServer) CheckLimit(ctx context.Context, req *pb.CheckLimitRe
 		allowed, remaining, err = fw.Allow(ctx, clientKey)
 	}
 
+	// Record Redis latency
+	metrics.RedisDuration.With(prometheus.Labels{
+		"operation": rule.Algorithm,
+	}).Observe(time.Since(redisStart).Seconds())
+
 	if err != nil {
 		return nil, fmt.Errorf("rate limiter error: %w", err)
 	}
+
+	// Record result
+	result := "allowed"
+	if !allowed {
+		result = "blocked"
+	}
+
+	metrics.RequestsTotal.With(prometheus.Labels{
+		"rule_id":   rule.RuleID,
+		"algorithm": rule.Algorithm,
+		"result":    result,
+	}).Inc()
+
+	// Record total request duration
+	metrics.RequestDuration.With(prometheus.Labels{
+		"rule_id":   rule.RuleID,
+		"algorithm": rule.Algorithm,
+	}).Observe(time.Since(requestStart).Seconds())
+
+	// Log to DB asynchronously
+	go func() {
+		logCtx := context.Background()
+		s.db.Exec(logCtx, `
+			INSERT INTO request_logs (client_id, rule_id, allowed)
+			VALUES ($1, $2, $3)
+		`, req.ClientId, req.RuleId, allowed)
+	}()
 
 	retryAfterMs := int64(0)
 	if !allowed {
